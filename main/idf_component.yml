@@ -1,0 +1,17 @@
+## IDF Component Manager Manifest File
+dependencies:
+  ## Required IDF version
+  idf:
+    version: ">=5.2"
+  espressif/esp-zigbee-lib:
+    version: ">=2.0.0"
+  example_common:
+    path: "../../utils/example_common"
+  temp_sensor_driver:
+    path: "../../utils/temp_sensor_driver"
+  switch_driver:
+    path: "../../utils/switch_driver"
+  alarm_timer:
+    path: "../../utils/alarm_timer"
+  espressif/onewire_bus: "^1.0.4"
+  espressif/ds18b20: "^0.4.0"

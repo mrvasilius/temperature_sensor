@@ -1,0 +1,78 @@
+dependencies:
+  alarm_timer:
+    dependencies: []
+    source:
+      path: ../utils/alarm_timer
+      type: local
+    version: '*'
+  espressif/ds18b20:
+    component_hash: 38022d0c39c08b1df3e77f95a3f9544251549a1fd9b6263357bf714026f4bb6b
+    dependencies:
+    - name: espressif/onewire_bus
+      registry_url: https://components.espressif.com
+      require: private
+      version: ^1.1.0
+    - matches:
+      - if: $CONFIG{DS18B20_SENSOR_HUB} == True
+      name: espressif/sensor_hub
+      registry_url: https://components.espressif.com
+      require: public
+      version: ^0.1.4
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 0.4.0
+  espressif/esp-zigbee-lib:
+    component_hash: d508f9b91c4b1973e6563fe840923fad2f15b23637f3d743dba1f5a719e1baab
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 2.0.4
+  espressif/onewire_bus:
+    component_hash: a85dc1ceb71fb87af77c57d5fd4e6f48a504de1fc2b83fc302ec0cea331d05ce
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.1.1
+  example_common:
+    dependencies: []
+    source:
+      path: ../utils/example_common
+      type: local
+    version: '*'
+  idf:
+    source:
+      type: idf
+    version: 6.0.1
+  switch_driver:
+    dependencies: []
+    source:
+      path: ../utils/switch_driver
+      type: local
+    version: '*'
+  temp_sensor_driver:
+    dependencies: []
+    source:
+      path: ../utils/temp_sensor_driver
+      type: local
+    version: '*'
+direct_dependencies:
+- alarm_timer
+- espressif/ds18b20
+- espressif/esp-zigbee-lib
+- espressif/onewire_bus
+- example_common
+- idf
+- switch_driver
+- temp_sensor_driver
+manifest_hash: 7ac7b839d556cb2a9a1b79169ee6289bf045b947095fff9a5e5235530375c07f
+target: esp32c6
+version: 3.0.0
