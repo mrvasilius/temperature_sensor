@@ -22,7 +22,7 @@
   "idf.openOcdConfigs": [
     "board/esp32c6-builtin.cfg"
   ],
-  "idf.currentSetup": "E:\\Documents\\Projects\\Programs\\esp\\v6.0.1\\esp-idf",
+  "idf.currentSetup": "E:\\Documents\\Projects\\Programs\\esp\\v5.5.6\\esp-idf",
   "idf.customExtraVars": {
     "IDF_TARGET": "esp32c6"
   },
