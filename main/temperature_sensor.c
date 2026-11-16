@@ -29,8 +29,14 @@ static ds18b20_device_handle_t ds18b20 = NULL;
 
 static int16_t zb_temperature_to_s16(float temp) { return (int16_t)(temp * 100); }
 static esp_timer_handle_t rejoin_timer;
-static bool is_rejoining = false; // Флаг, чтобы не запускать таймер повторно
+static bool is_rejoining = false;
+
 static int64_t last_parent_link_failure_log = 0;
+
+static ezb_zcl_reporting_info_t temp_report_info = EZB_ZCL_INVALID_REPORTING_INFO;
+
+static bool driver_inited = false;
+static onewire_bus_handle_t onewire_bus = NULL;
 
 static void rejoin_timer_callback(void* arg)
 {
@@ -55,8 +61,14 @@ static void init_rejoin_timer(void)
 static ezb_err_t config_temp_reporting(uint8_t ep_id)
 {
     ezb_err_t ret = EZB_ERR_NONE;
+
+    // Проверяем, найден ли датчик
+    if (ds18b20 == NULL) {
+        ESP_LOGW(TAG, "Датчик не найден, Reporting не будет запущен");
+        return ESP_FAIL;
+    }
     
-    ezb_zcl_reporting_info_t report_info = ezb_zcl_reporting_info_find(
+    temp_report_info = ezb_zcl_reporting_info_find(
         ep_id,
         EZB_ZCL_CLUSTER_ID_TEMPERATURE_MEASUREMENT,
         EZB_ZCL_CLUSTER_SERVER,
@@ -64,7 +76,7 @@ static ezb_err_t config_temp_reporting(uint8_t ep_id)
         EZB_ZCL_STD_MANUF_CODE
     );
 
-    if (report_info == EZB_ZCL_INVALID_REPORTING_INFO) {
+    if (temp_report_info == EZB_ZCL_INVALID_REPORTING_INFO) {
         ESP_LOGE(TAG, "Слот для отчета НЕ найден!");
         return ESP_FAIL;
     }
@@ -73,14 +85,14 @@ static ezb_err_t config_temp_reporting(uint8_t ep_id)
     delta.s16 = 10; // 0.1 °C
 
     esp_zigbee_lock_acquire(portMAX_DELAY);
-    ret = ezb_zcl_reporting_info_update(report_info, 60, 600, &delta);
+    ret = ezb_zcl_reporting_info_update(temp_report_info, 60, 600, &delta);
     esp_zigbee_lock_release();
 
     if (ret == EZB_ERR_NONE) {
         ESP_LOGI(TAG, "Reporting обновлен: 0.1°C, 1-10 минут");
         
         esp_zigbee_lock_acquire(portMAX_DELAY);
-        ret = ezb_zcl_reporting_start_attr_report(report_info);
+        ret = ezb_zcl_reporting_start_attr_report(temp_report_info);
         esp_zigbee_lock_release();
         
         if (ret == EZB_ERR_NONE) {
@@ -113,54 +125,147 @@ static void esp_app_temp_sensor_handler(float temperature)
 
 static esp_err_t deferred_driver_init(void)
 {
-    static bool is_inited = false;
-    ESP_RETURN_ON_FALSE(!is_inited, ESP_OK, TAG, "Deferred driver already initialized");
-
-    ESP_LOGI(TAG, "Инициализация 1-Wire шины на GPIO %d", ONEWIRE_GPIO);
-    onewire_bus_handle_t bus = NULL;
-    onewire_bus_config_t bus_config = { .bus_gpio_num = ONEWIRE_GPIO };
-    onewire_bus_rmt_config_t rmt_config = { .max_rx_bytes = 10 };
-    ESP_ERROR_CHECK(onewire_new_bus_rmt(&bus_config, &rmt_config, &bus));
-
-    onewire_device_iter_handle_t iter = NULL;
-    ESP_ERROR_CHECK(onewire_new_device_iter(bus, &iter));
-    onewire_device_t next_onewire_device;
-    esp_err_t search_result = ESP_OK;
-
-    do {
-        search_result = onewire_device_iter_get_next(iter, &next_onewire_device);
-        if (search_result == ESP_OK) {
-            ds18b20_config_t ds_cfg = {};
-            if (ds18b20_new_device_from_enumeration(&next_onewire_device, &ds_cfg, &ds18b20) == ESP_OK) {
-                ESP_LOGI(TAG, "Найден DS18B20, адрес: %016llX", next_onewire_device.address);
-                break;
-            }
-        }
-    } while (search_result != ESP_ERR_NOT_FOUND);
-    ESP_ERROR_CHECK(onewire_del_device_iter(iter));
-
-    if (ds18b20 == NULL) {
-        ESP_LOGE(TAG, "Датчик DS18B20 не найден!");
-        return ESP_FAIL;
+    if (driver_inited) {
+        ESP_LOGI(TAG, "Driver already initialized, skipping.");
+        return ESP_OK;
     }
 
-    is_inited = true;
+    // Удаляем старую шину, если она есть
+    if (onewire_bus != NULL) {
+        onewire_bus_del(onewire_bus);
+        onewire_bus = NULL;
+    }
+
+    ESP_LOGI(TAG, "Инициализация 1-Wire шины на GPIO %d", ONEWIRE_GPIO);
+    onewire_bus_config_t bus_config = { .bus_gpio_num = ONEWIRE_GPIO };
+    onewire_bus_rmt_config_t rmt_config = { .max_rx_bytes = 10 };
+    ESP_RETURN_ON_ERROR(onewire_new_bus_rmt(&bus_config, &rmt_config, &onewire_bus), TAG, "Bus init failed");
+
+    driver_inited = true; // Шина инициализирована
     return ESP_OK;
+}
+
+static void reset_driver_state(void)
+{
+    ds18b20 = NULL;
+}
+
+static void update_reporting_state(bool is_ok)
+{
+    static bool reporting_active = false;
+    
+    if (is_ok && !reporting_active) {
+        if (temp_report_info == EZB_ZCL_INVALID_REPORTING_INFO) {
+            config_temp_reporting(ESP_ZIGBEE_HA_TEMPERATURE_SENSOR_EP_ID);
+        } else {
+            esp_zigbee_lock_acquire(portMAX_DELAY);
+            ezb_zcl_reporting_start_attr_report(temp_report_info);
+            esp_zigbee_lock_release();
+            ESP_LOGI(TAG, "Reporting ВОЗОБНОВЛЕН");
+        }
+        reporting_active = true;
+    } else if (!is_ok && reporting_active) {
+        if (temp_report_info != EZB_ZCL_INVALID_REPORTING_INFO) {
+            esp_zigbee_lock_acquire(portMAX_DELAY);
+            ezb_zcl_reporting_stop_attr_report(temp_report_info);
+            esp_zigbee_lock_release();
+            ESP_LOGW(TAG, "Reporting ОСТАНОВЛЕН (датчик недоступен)");
+        }
+        reporting_active = false;
+    }
+}
+
+static void ds18b20_discovery_task(void *pvParameters)
+{
+    int failed_attempts = 0;
+    
+    while (1) {
+        if (ds18b20 == NULL) {
+            if (!driver_inited) {
+                if (deferred_driver_init() != ESP_OK) {
+                    ESP_LOGW(TAG, "Не удалось инициализировать шину, ждем 10 секунд...");
+                    vTaskDelay(pdMS_TO_TICKS(10000));
+                    continue;
+                }
+            }
+            
+            ESP_LOGI(TAG, "Датчик не найден. Пытаемся найти...");
+            
+            // --- ПОИСК ДАТЧИКА ---
+            onewire_device_iter_handle_t iter = NULL;
+            if (onewire_new_device_iter(onewire_bus, &iter) == ESP_OK) {
+                onewire_device_t next_onewire_device;
+                esp_err_t search_result = ESP_OK;
+                do {
+                    search_result = onewire_device_iter_get_next(iter, &next_onewire_device);
+                    if (search_result == ESP_OK) {
+                        ds18b20_config_t ds_cfg = {};
+                        if (ds18b20_new_device_from_enumeration(&next_onewire_device, &ds_cfg, &ds18b20) == ESP_OK) {
+                            ESP_LOGI(TAG, "Найден DS18B20, адрес: %016llX", next_onewire_device.address);
+                            failed_attempts = 0; // Сбрасываем счетчик
+                            break;
+                        }
+                    }
+                } while (search_result != ESP_ERR_NOT_FOUND);
+                onewire_del_device_iter(iter);
+            }
+            
+            if (ds18b20 == NULL) {
+                failed_attempts++;
+                ESP_LOGW(TAG, "Датчик не найден (попытка %d), ждем 10 секунд...", failed_attempts);
+                
+                // Если 30 попыток (5 минут) не удались, пересоздаем шину
+                if (failed_attempts >= 30) {
+                    ESP_LOGW(TAG, "30 неудачных попыток. Пересоздаем шину...");
+                    if (onewire_bus != NULL) {
+                        onewire_bus_del(onewire_bus);
+                        onewire_bus = NULL;
+                    }
+                    driver_inited = false; // Сбрасываем флаг, чтобы deferred_driver_init создала шину заново
+                    failed_attempts = 0;
+                }
+            } else {
+                ESP_LOGI(TAG, "Датчик найден!");
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(10000));
+    }
 }
 
 static void ds18b20_read_task(void *pvParameters)
 {
     float temperature;
+    
     while (1) {
+        bool is_ok = false;
+        
         if (ds18b20) {
             if (ds18b20_trigger_temperature_conversion(ds18b20) == ESP_OK) {
                 vTaskDelay(pdMS_TO_TICKS(800));
                 if (ds18b20_get_temperature(ds18b20, &temperature) == ESP_OK) {
-                    esp_app_temp_sensor_handler(temperature); 
+                    if (temperature >= -50.0f && temperature <= 50.0f) {
+                        is_ok = true;
+                        esp_app_temp_sensor_handler(temperature);
+                    } else {
+                        ESP_LOGW(TAG, "Температура вне диапазона");
+                    }
+                } else {
+                    ESP_LOGW(TAG, "Ошибка чтения");
                 }
+            } else {
+                ESP_LOGW(TAG, "Ошибка конвертации");
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(10000)); // Читаем каждые 10 секунд
+        
+        // Управление Reporting вынесено в отдельную функцию
+        update_reporting_state(is_ok);
+
+        if (!is_ok && ds18b20 != NULL) {
+            ESP_LOGW(TAG, "Датчик перестал отвечать. Сбрасываем состояние для повторного поиска.");
+            reset_driver_state(); // Это установит ds18b20 = NULL и driver_inited = false
+        }
+        
+        vTaskDelay(pdMS_TO_TICKS(10000));
     }
 }
 
@@ -327,6 +432,7 @@ void app_main(void)
     init_rejoin_timer();
     ESP_LOGI(TAG, "Start ESP Zigbee Stack");
     
+    xTaskCreate(ds18b20_discovery_task, "ds18b20_discovery", 4096, NULL, 3, NULL);
     xTaskCreate(ds18b20_read_task, "ds18b20_read", 4096, NULL, 4, NULL);
     xTaskCreate(esp_zigbee_stack_main_task, "Zigbee_main", 4096, NULL, 5, NULL);
 }
