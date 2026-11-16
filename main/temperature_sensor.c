@@ -308,6 +308,21 @@ static void esp_zigbee_stack_main_task(void *pvParameters)
 
 void app_main(void)
 {
+    // --- Включение внешней антенны на XIAO ESP32C6 ---
+    // 1. Включаем RF-переключатель (GPIO3 -> LOW)
+    gpio_reset_pin(GPIO_NUM_3);
+    gpio_set_direction(GPIO_NUM_3, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_NUM_3, 0);
+    
+    // Небольшая задержка, чтобы переключатель точно включился
+    vTaskDelay(pdMS_TO_TICKS(100)); 
+
+    // 2. Выбираем внешнюю антенну (GPIO14 -> HIGH)
+    gpio_reset_pin(GPIO_NUM_14);
+    gpio_set_direction(GPIO_NUM_14, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_NUM_14, 1);
+    // ------------------------------------------------
+
     ESP_ERROR_CHECK(nvs_flash_init());
     init_rejoin_timer();
     ESP_LOGI(TAG, "Start ESP Zigbee Stack");
