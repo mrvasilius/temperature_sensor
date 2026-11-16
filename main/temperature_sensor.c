@@ -24,8 +24,8 @@ static const char *TAG = "TEMPERATURE_SENSOR";
 #define ONEWIRE_GPIO GPIO_NUM_0
 static ds18b20_device_handle_t ds18b20 = NULL;
 
-#define ESP_TEMP_SENSOR_MIN_VALUE       (-10)
-#define ESP_TEMP_SENSOR_MAX_VALUE       (80)
+#define ESP_TEMP_SENSOR_MIN_VALUE       (-50)
+#define ESP_TEMP_SENSOR_MAX_VALUE       (50)
 
 static int16_t zb_temperature_to_s16(float temp) { return (int16_t)(temp * 100); }
 static esp_timer_handle_t rejoin_timer;
@@ -37,6 +37,11 @@ static ezb_zcl_reporting_info_t temp_report_info = EZB_ZCL_INVALID_REPORTING_INF
 
 static bool driver_inited = false;
 static onewire_bus_handle_t onewire_bus = NULL;
+
+static float round_to_tenth(float value) {
+    // Умножаем на 10, прибавляем 0.5 (для округления), приводим к int и делим обратно
+    return (float)((int)(value * 10.0f + (value >= 0 ? 0.5f : -0.5f))) / 10.0f;
+}
 
 static void rejoin_timer_callback(void* arg)
 {
@@ -243,6 +248,8 @@ static void ds18b20_read_task(void *pvParameters)
             if (ds18b20_trigger_temperature_conversion(ds18b20) == ESP_OK) {
                 vTaskDelay(pdMS_TO_TICKS(800));
                 if (ds18b20_get_temperature(ds18b20, &temperature) == ESP_OK) {
+                    // Округляем до 0.1 градуса
+                    temperature = round_to_tenth(temperature);
                     if (temperature >= -50.0f && temperature <= 50.0f) {
                         is_ok = true;
                         esp_app_temp_sensor_handler(temperature);
